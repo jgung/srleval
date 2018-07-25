@@ -9,6 +9,9 @@ SE_END = ")"
 CONTINUATION_PATTERN = re.compile("^C-")
 START_TAG_PATTERN = re.compile("^\(([^*(]+)")
 END_TAG_PATTERN = re.compile("^([^)]*)\)")
+OKAY_KEY = "ok"
+EXCESS_KEY = "op"
+MISS_KEY = "ms"
 
 
 def conll_iterator(conll_path):
@@ -32,12 +35,10 @@ def conll_iterator(conll_path):
             yield current
 
 
-def main(opts):
-    gold = conll_iterator(opts.gold)
-    pred = conll_iterator(opts.pred)
-    ntargets = 0
-    ns = 0
-    e = Evaluation()
+def evaluate(gold_path, pred_path):
+    gold, pred = conll_iterator(gold_path), conll_iterator(pred_path)
+    ntargets, ns, e = 0, 0, Evaluation()
+
     for sent_id, (gold_sent, pred_sent) in enumerate(zip(gold, pred)):
         gold_targets = gold_sent[0]
         pred_targets = pred_sent[0]
@@ -70,19 +71,15 @@ def main(opts):
             e.ptv += results.ptv
 
             for key, val in results.types.items():
-                e.types[key]['ok'] += val['ok']
-                e.types[key]['op'] += val['op']
-                e.types[key]['ms'] += val['ms']
+                e.types[key][OKAY_KEY] += val[OKAY_KEY]
+                e.types[key][EXCESS_KEY] += val[EXCESS_KEY]
+                e.types[key][MISS_KEY] += val[MISS_KEY]
             for key, val in results.excluded.items():
-                e.excluded[key]['ok'] += val['ok']
-                e.excluded[key]['op'] += val['op']
-                e.excluded[key]['ms'] += val['ms']
+                e.excluded[key][OKAY_KEY] += val[OKAY_KEY]
+                e.excluded[key][EXCESS_KEY] += val[EXCESS_KEY]
+                e.excluded[key][MISS_KEY] += val[MISS_KEY]
         ns += 1
-
-    print('Number of Sentences    :      {:<6}'.format(ns))
-    print('Number of Propositions :      {:<6}'.format(ntargets))
-    print("Percentage of perfect props : {:<3.2f}".format(100 * e.ptv / ntargets if ntargets > 0 else 0))
-    print(e)
+    return SrlEvaluation(ns, ntargets, e)
 
 
 def evaluate_proposition(gprop, pprop, exclusions=None):
@@ -95,17 +92,17 @@ def evaluate_proposition(gprop, pprop, exclusions=None):
     ok, ms, op, eq = SrlProp.discriminate_args(gprop, pprop)
     e = Evaluation()
 
-    def update_counts(counts, count_key):
+    def update_counts(counts, count_key, incr_func):
         for a in counts:
             if not excluded(a.label):
-                e.ok += 1
+                incr_func()
                 e.types[a.label][count_key] += 1
             else:
                 e.excluded[a.label][count_key] += 1
 
-    update_counts(ok, 'ok')
-    update_counts(ms, 'ms')
-    update_counts(op, 'op')
+    update_counts(ok, OKAY_KEY, e.increment_ok)
+    update_counts(ms, MISS_KEY, e.increment_ms)
+    update_counts(op, EXCESS_KEY, e.increment_op)
 
     e.ptv = 1 if not e.op and not e.ms else 0
     return e
@@ -122,6 +119,15 @@ class Evaluation(object):
 
     def prec_rec_f1(self):
         return Evaluation.precrecf1(self.ok, self.op, self.ms)
+
+    def increment_ok(self):
+        self.ok += 1
+
+    def increment_op(self):
+        self.op += 1
+
+    def increment_ms(self):
+        self.ms += 1
 
     @staticmethod
     def precrecf1(ok, op, ms):
@@ -140,9 +146,24 @@ class Evaluation(object):
 
         for label, count in self.types.items():
             lines.append('{:<10}   {:<6}  {:<6}  {:<6}   {:<3.2f}  {:<3.2f}  {:<3.2f}'
-                         .format(label, count['ok'], count['op'], count['ms'],
-                                 *Evaluation.precrecf1(count['ok'], count['op'], count['ms'])))
+                         .format(label, count[OKAY_KEY], count[EXCESS_KEY], count[MISS_KEY],
+                                 *Evaluation.precrecf1(count[OKAY_KEY], count[EXCESS_KEY], count[MISS_KEY])))
 
+        return '\n'.join(lines)
+
+
+class SrlEvaluation(object):
+    def __init__(self, ns=0, ntargets=0, evaluation=Evaluation()):
+        self.ns = ns
+        self.ntargets = ntargets
+        self.evaluation = evaluation
+
+    def __str__(self) -> str:
+        lines = ['Number of Sentences    :      {:<6}'.format(self.ns),
+                 'Number of Propositions :      {:<6}'.format(self.ntargets),
+                 "Percentage of perfect props : {:<3.2f}".format(
+                     100 * self.evaluation.ptv / self.ntargets if self.ntargets > 0 else 0),
+                 str(self.evaluation)]
         return '\n'.join(lines)
 
 
@@ -414,7 +435,7 @@ class SrlPhrase(object):
         """
         Returns the phrases rooted in the current phrase in DFS order.
         """
-        return depth_first_search(self, lambda val: val.phrases)
+        return dfs(self, lambda val: val.phrases)
 
     def __str__(self) -> str:
         result = "({}{}{})".format(self.start,
@@ -435,7 +456,7 @@ class SrlArg(SrlPhrase):
         return len(self.phrases) == 0
 
 
-def depth_first_search(root, child_func):
+def dfs(root, child_func):
     """
     Returns a list of elements in DFS order from a given root node.
     :param root: root element
@@ -455,4 +476,5 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Evaluation program for the CoNLL-2005 Shared Task")
     parser.add_argument('--gold', type=str, required=True, help='Path to file containing gold propositions.')
     parser.add_argument('--pred', type=str, required=True, help='Path to file containing predicted propositions.')
-    main(parser.parse_args())
+    opts = parser.parse_args()
+    print(evaluate(gold_path=opts.gold, pred_path=opts.pred))
