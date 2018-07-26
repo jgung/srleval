@@ -31,14 +31,13 @@ def conll_iterator(conll_path):
                     yield current
                     current = defaultdict(list)
                 continue
-            for i, val in enumerate(line.split(" ")):
+            for i, val in enumerate(line.split()):
                 current[i].append(val)
         if current:  # read last instance if there is no newline at end of file
             yield current
 
 
-def evaluate(gold_path, pred_path):
-    gold, pred = conll_iterator(gold_path), conll_iterator(pred_path)
+def evaluate(gold, pred):
     ntargets, ns, e = 0, 0, Evaluation()
 
     for sent_id, (gold_sent, pred_sent) in enumerate(zip(gold, pred)):
@@ -66,7 +65,7 @@ def evaluate(gold_path, pred_path):
                           "Counting all gold arguments as missed!".format(sent_id, gprop.verb, gprop.position, pprop.verb,
                                                                           pprop.position))
             ntargets += 1
-            results = evaluate_proposition(gprop, pprop)
+            results = evaluate_proposition(gprop, pprop, exclusions=['V'])
             e.ok += results.ok
             e.op += results.op
             e.ms += results.ms
@@ -162,10 +161,10 @@ class Evaluation(object):
         for pred_label in [item for item in self.confusions[NONE].keys() if item not in [NONE, VERB]]:
             uop += self.confusions[NONE][pred_label]
         lines = ["--------------------------------------------------------------------",
-                 "{:<10}   {:<6}  {:<6}  {:<6}   {:<6}  {:<6}  {:<6}  {:<6}"
-                     .format("", "corr.", "excess", "missed", "prec.", "rec.", "F1", "lAcc"),
-                 "{:<10}   {:<6}  {:<6}  {:<6}   {:<6.2f}  {:<6.2f}  {:<6.2f}  {:<6.2f}"
-                     .format("Unlabeled", uok, uop, ums, *Evaluation.precrecf1(uok, uop, ums), 100 * uacc / uok),
+                 "{:>10}   {:>6}  {:>6}  {:>6}   {:>6}  {:>6}  {:>6}  {:>6}".format(
+                     "", "corr.", "excess", "missed", "prec.", "rec.", "F1", "lAcc"),
+                 "{:>10}   {:>6}  {:>6}  {:>6}   {:>6.2f}  {:>6.2f}  {:>6.2f}  {:>6.2f}".format(
+                     "Unlabeled", uok, uop, ums, *Evaluation.precrecf1(uok, uop, ums), 100 * uacc / uok),
                  "--------------------------------------------------------------------",
                  "\n---- Confusion Matrix: (one row for each correct role, with the distribution of predictions)"]
 
@@ -176,27 +175,37 @@ class Evaluation(object):
 
         vals = ["            "]
         for i, gold_label in enumerate(keys):
-            vals.append("{:<4}".format(i))
+            vals.append("{:>4}".format(i-1))
         lines.append(" ".join(vals))
         for i, gold_label in enumerate(keys):
-            vals = ["{:<2}: {:>8}".format(i, gold_label)]
+            vals = ["{:>2}: {:<8}".format(i-1, gold_label)]
             for pred_label in keys:
-                vals.append("{:<4}".format(self.confusions[gold_label][pred_label]))
+                vals.append("{:>4}".format(self.confusions[gold_label][pred_label]))
             lines.append(" ".join(vals))
         return "\n".join(lines)
 
     def __str__(self) -> str:
+        linebreak = "------------------------------------------------------------"
         lines = [
-            '{:<10}   {:<6}  {:<6}  {:<6}   {:<6}  {:<6}  {:<6}'.format("", "corr.", "excess", "missed", "prec.", "rec.", "F1"),
-            '{:<10}   {:<6}  {:<6}  {:<6}   {:<6.2f}  {:<6.2f}  {:<6.2f}'.format("Overall", self.ok, self.op, self.ms,
-                                                                                 *self.prec_rec_f1())
+            '{:>10}   {:>6}  {:>6}  {:>6}   {:>6}  {:>6}  {:>6}'.format("", "corr.", "excess", "missed", "prec.", "rec.", "F1"),
+            linebreak,
+            '{:>10}   {:>6}  {:>6}  {:>6}   {:>6.2f}  {:>6.2f}  {:>6.2f}'.format("Overall", self.ok, self.op, self.ms,
+                                                                                 *self.prec_rec_f1()),
+            '----------'
         ]
 
-        for label, count in self.types.items():
-            lines.append('{:<10}   {:<6}  {:<6}  {:<6}   {:<6.2f}  {:<6.2f}  {:<6.2f}'
+        for label in sorted(self.types.keys()):
+            count = self.types[label]
+            lines.append('{:>10}   {:>6}  {:>6}  {:>6}   {:>6.2f}  {:>6.2f}  {:>6.2f}'
                          .format(label, count[OKAY_KEY], count[EXCESS_KEY], count[MISS_KEY],
                                  *Evaluation.precrecf1(count[OKAY_KEY], count[EXCESS_KEY], count[MISS_KEY])))
-
+        lines.append(linebreak)
+        for label in sorted(self.excluded.keys()):
+            count = self.excluded[label]
+            lines.append('{:>10}   {:>6}  {:>6}  {:>6}   {:>6.2f}  {:>6.2f}  {:>6.2f}'
+                         .format(label, count[OKAY_KEY], count[EXCESS_KEY], count[MISS_KEY],
+                                 *Evaluation.precrecf1(count[OKAY_KEY], count[EXCESS_KEY], count[MISS_KEY])))
+        lines.append(linebreak)
         return '\n'.join(lines)
 
 
@@ -210,10 +219,10 @@ class SrlEvaluation(object):
         return self.evaluation.confusion_matrix()
 
     def __str__(self) -> str:
-        lines = ['Number of Sentences    :      {:<6}'.format(self.ns),
-                 'Number of Propositions :      {:<6}'.format(self.ntargets),
-                 "Percentage of perfect props : {:<6.2f}".format(
-                     100 * self.evaluation.ptv / self.ntargets if self.ntargets > 0 else 0),
+        lines = ['Number of Sentences    :      {:>6}'.format(self.ns),
+                 'Number of Propositions :      {:>6}'.format(self.ntargets),
+                 "Percentage of perfect props : {:>6.2f}".format(
+                     100 * self.evaluation.ptv / self.ntargets if self.ntargets > 0 else 0), '',
                  str(self.evaluation)]
         return '\n'.join(lines)
 
@@ -531,7 +540,9 @@ if __name__ == '__main__':
                         help='Produce a confusion matrix of gold vs. predicted arguments, wrt. their role')
     parser.set_defaults(confusions=False)
     opts = parser.parse_args()
-    evaluation_results = evaluate(gold_path=opts.gold, pred_path=opts.pred)
+
+    gold_props, pred_props = conll_iterator(opts.gold), conll_iterator(opts.pred)
+    evaluation_results = evaluate(gold=gold_props, pred=pred_props)
     print(evaluation_results)
     if opts.confusions:
         print(evaluation_results.confusion_matrix())
