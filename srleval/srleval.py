@@ -12,6 +12,8 @@ END_TAG_PATTERN = re.compile("^([^)]*)\)")
 OKAY_KEY = "ok"
 EXCESS_KEY = "op"
 MISS_KEY = "ms"
+NONE = "-NONE-"
+VERB = "V"
 
 
 def conll_iterator(conll_path):
@@ -78,6 +80,8 @@ def evaluate(gold_path, pred_path):
                 e.excluded[key][OKAY_KEY] += val[OKAY_KEY]
                 e.excluded[key][EXCESS_KEY] += val[EXCESS_KEY]
                 e.excluded[key][MISS_KEY] += val[MISS_KEY]
+
+            e.update_confusion_matrix(gprop, pprop)
         ns += 1
     return SrlEvaluation(ns, ntargets, e)
 
@@ -116,6 +120,7 @@ class Evaluation(object):
         self.types = defaultdict(Counter)
         self.excluded = defaultdict(Counter)
         self.ptv = 0
+        self.confusions = defaultdict(Counter)
 
     def prec_rec_f1(self):
         return Evaluation.precrecf1(self.ok, self.op, self.ms)
@@ -131,21 +136,64 @@ class Evaluation(object):
 
     @staticmethod
     def precrecf1(ok, op, ms):
-        p = 100 * ok / (ok + op) if ok + op > 0 else 0
-        r = 100 * ok / (ok + ms) if ok + ms > 0 else 0
-        f1 = (2 * p * r) / (p + r) if p + r > 0 else 0
-        return p, r, f1
+        precision = 100 * ok / (ok + op) if ok + op > 0 else 0
+        recall = 100 * ok / (ok + ms) if ok + ms > 0 else 0
+        f1 = (2 * precision * recall) / (precision + recall) if precision + recall > 0 else 0
+        return precision, recall, f1
+
+    def update_confusion_matrix(self, gprop, pprop):
+        ok, ms, op, eq = SrlProp.discriminate_args(gprop, pprop, False)
+        for pred, gold in zip(ok, eq):
+            self.confusions[gold.label][pred.label] += 1
+        for pred in ms:
+            self.confusions[pred.label][NONE] += 1
+        for pred in op:
+            self.confusions[NONE][pred.label] += 1
+
+    def confusion_matrix(self):
+        uok, uop, ums, uacc = 0, 0, 0, 0
+        for gold_label, label_counter in self.confusions.items():
+            if gold_label in [NONE, VERB]:
+                continue
+            for pred_label in [item for item in self.confusions.keys() if item not in [NONE, VERB]]:
+                uok += label_counter[pred_label]
+            uacc += label_counter[gold_label]
+            ums += label_counter[NONE]
+        for pred_label in [item for item in self.confusions[NONE].keys() if item not in [NONE, VERB]]:
+            uop += self.confusions[NONE][pred_label]
+        lines = ["--------------------------------------------------------------------",
+                 "{:<10}   {:<6}  {:<6}  {:<6}   {:<6}  {:<6}  {:<6}  {:<6}"
+                     .format("", "corr.", "excess", "missed", "prec.", "rec.", "F1", "lAcc"),
+                 "{:<10}   {:<6}  {:<6}  {:<6}   {:<6.2f}  {:<6.2f}  {:<6.2f}  {:<6.2f}"
+                     .format("Unlabeled", uok, uop, ums, *Evaluation.precrecf1(uok, uop, ums), 100 * uacc / uok),
+                 "--------------------------------------------------------------------",
+                 "\n---- Confusion Matrix: (one row for each correct role, with the distribution of predictions)"]
+
+        all_keys = set(self.confusions.keys())
+        for val in self.confusions.values():
+            all_keys = all_keys.union(val.keys())
+        keys = sorted(all_keys)
+
+        vals = ["            "]
+        for i, gold_label in enumerate(keys):
+            vals.append("{:<4}".format(i))
+        lines.append(" ".join(vals))
+        for i, gold_label in enumerate(keys):
+            vals = ["{:<2}: {:>8}".format(i, gold_label)]
+            for pred_label in keys:
+                vals.append("{:<4}".format(self.confusions[gold_label][pred_label]))
+            lines.append(" ".join(vals))
+        return "\n".join(lines)
 
     def __str__(self) -> str:
-        p, r, f1 = self.prec_rec_f1()
-
         lines = [
             '{:<10}   {:<6}  {:<6}  {:<6}   {:<6}  {:<6}  {:<6}'.format("", "corr.", "excess", "missed", "prec.", "rec.", "F1"),
-            '{:<10}   {:<6}  {:<6}  {:<6}   {:<3.2f}  {:<3.2f}  {:<3.2f}'.format("Overall", self.ok, self.op, self.ms, p, r, f1)
+            '{:<10}   {:<6}  {:<6}  {:<6}   {:<6.2f}  {:<6.2f}  {:<6.2f}'.format("Overall", self.ok, self.op, self.ms,
+                                                                                 *self.prec_rec_f1())
         ]
 
         for label, count in self.types.items():
-            lines.append('{:<10}   {:<6}  {:<6}  {:<6}   {:<3.2f}  {:<3.2f}  {:<3.2f}'
+            lines.append('{:<10}   {:<6}  {:<6}  {:<6}   {:<6.2f}  {:<6.2f}  {:<6.2f}'
                          .format(label, count[OKAY_KEY], count[EXCESS_KEY], count[MISS_KEY],
                                  *Evaluation.precrecf1(count[OKAY_KEY], count[EXCESS_KEY], count[MISS_KEY])))
 
@@ -158,10 +206,13 @@ class SrlEvaluation(object):
         self.ntargets = ntargets
         self.evaluation = evaluation
 
+    def confusion_matrix(self):
+        return self.evaluation.confusion_matrix()
+
     def __str__(self) -> str:
         lines = ['Number of Sentences    :      {:<6}'.format(self.ns),
                  'Number of Propositions :      {:<6}'.format(self.ntargets),
-                 "Percentage of perfect props : {:<3.2f}".format(
+                 "Percentage of perfect props : {:<6.2f}".format(
                      100 * self.evaluation.ptv / self.ntargets if self.ntargets > 0 else 0),
                  str(self.evaluation)]
         return '\n'.join(lines)
@@ -476,5 +527,11 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Evaluation program for the CoNLL-2005 Shared Task")
     parser.add_argument('--gold', type=str, required=True, help='Path to file containing gold propositions.')
     parser.add_argument('--pred', type=str, required=True, help='Path to file containing predicted propositions.')
+    parser.add_argument('-C', dest='confusions', action='store_true',
+                        help='Produce a confusion matrix of gold vs. predicted arguments, wrt. their role')
+    parser.set_defaults(confusions=False)
     opts = parser.parse_args()
-    print(evaluate(gold_path=opts.gold, pred_path=opts.pred))
+    evaluation_results = evaluate(gold_path=opts.gold, pred_path=opts.pred)
+    print(evaluation_results)
+    if opts.confusions:
+        print(evaluation_results.confusion_matrix())
