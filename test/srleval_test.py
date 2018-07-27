@@ -2,7 +2,7 @@ import unittest
 
 import pkg_resources
 
-from srleval.srleval import conll_iterator, evaluate, options, perl_output
+from srleval.srleval import conll_iterator, evaluate, get_perl_output, options
 
 
 class TestEval(unittest.TestCase):
@@ -22,7 +22,8 @@ class TestEval(unittest.TestCase):
         gold_path = pkg_resources.resource_filename(__name__, gold)
         pred_path = pkg_resources.resource_filename(__name__, pred)
         expected_path = pkg_resources.resource_filename(__name__, expected)
-        output = perl_output(options([*args, '--gold', gold_path, '--pred', pred_path]))
+        _opts = options([*args, '--gold', gold_path, '--pred', pred_path])
+        output = get_perl_output(_opts.gold, _opts.pred, _opts.latex, _opts.confusions)
         with open(expected_path, 'r') as f:
             for expected, actual in zip(f, output.split('\n')):
                 self.assertEquals(expected.strip(), actual.strip())
