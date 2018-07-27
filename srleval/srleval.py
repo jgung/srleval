@@ -175,37 +175,38 @@ class Evaluation(object):
 
         vals = ["            "]
         for i, gold_label in enumerate(keys):
-            vals.append("{:>4}".format(i-1))
+            vals.append("{:>4}".format(i - 1))
         lines.append(" ".join(vals))
         for i, gold_label in enumerate(keys):
-            vals = ["{:>2}: {:<8}".format(i-1, gold_label)]
+            vals = ["{:>2}: {:<8}".format(i - 1, gold_label)]
             for pred_label in keys:
                 vals.append("{:>4}".format(self.confusions[gold_label][pred_label]))
             lines.append(" ".join(vals))
         return "\n".join(lines)
 
     def __str__(self) -> str:
-        linebreak = "------------------------------------------------------------"
+        def _format(val, ok, op, ms, prec, rec, f1):
+            return '{:>10}   {:>6}  {:>6}  {:>6}   {:>6.2f}  {:>6.2f}  {:>6.2f}'.format(val, ok, op, ms, prec, rec, f1)
+
+        line = "------------------------------------------------------------"
         lines = [
             '{:>10}   {:>6}  {:>6}  {:>6}   {:>6}  {:>6}  {:>6}'.format("", "corr.", "excess", "missed", "prec.", "rec.", "F1"),
-            linebreak,
-            '{:>10}   {:>6}  {:>6}  {:>6}   {:>6.2f}  {:>6.2f}  {:>6.2f}'.format("Overall", self.ok, self.op, self.ms,
-                                                                                 *self.prec_rec_f1()),
+            line,
+            _format("Overall", self.ok, self.op, self.ms, *self.prec_rec_f1()),
             '----------'
         ]
 
         for label in sorted(self.types.keys()):
             count = self.types[label]
-            lines.append('{:>10}   {:>6}  {:>6}  {:>6}   {:>6.2f}  {:>6.2f}  {:>6.2f}'
-                         .format(label, count[OKAY_KEY], count[EXCESS_KEY], count[MISS_KEY],
+            lines.append(_format(label, count[OKAY_KEY], count[EXCESS_KEY], count[MISS_KEY],
                                  *Evaluation.precrecf1(count[OKAY_KEY], count[EXCESS_KEY], count[MISS_KEY])))
-        lines.append(linebreak)
+        lines.append(line)
         for label in sorted(self.excluded.keys()):
             count = self.excluded[label]
-            lines.append('{:>10}   {:>6}  {:>6}  {:>6}   {:>6.2f}  {:>6.2f}  {:>6.2f}'
-                         .format(label, count[OKAY_KEY], count[EXCESS_KEY], count[MISS_KEY],
+            lines.append(_format(label, count[OKAY_KEY], count[EXCESS_KEY], count[MISS_KEY],
                                  *Evaluation.precrecf1(count[OKAY_KEY], count[EXCESS_KEY], count[MISS_KEY])))
-        lines.append(linebreak)
+        lines.append(line)
+
         return '\n'.join(lines)
 
 
@@ -217,6 +218,33 @@ class SrlEvaluation(object):
 
     def confusion_matrix(self):
         return self.evaluation.confusion_matrix()
+
+    def latex(self):
+        def _format_latex(val, prec, rec, f1):
+            return '{:<10} & {:>6.2f}\\% & {:>6.2f}\\% & {:>6.2f}\\\\'.format(val, prec, rec, f1)
+
+        lines = ['\\begin{table}[t]',
+                 '\\centering',
+                 '\\begin{tabular}{|l|r|r|r|}\\cline{2-4}',
+                 '\\multicolumn{1}{l|}{}',
+                 '           & Precision & Recall & F$_{\\beta=1}$\\\\',
+                 '\\hline',
+                 _format_latex('Overall', *self.evaluation.prec_rec_f1()),
+                 '\\hline'
+                 ]
+        for label, label_counts in sorted(self.evaluation.types.items(), key=lambda item: item[0]):
+            lines.append(_format_latex(label, *self.evaluation.precrecf1(label_counts[OKAY_KEY], label_counts[EXCESS_KEY],
+                                                                         label_counts[MISS_KEY])))
+        lines.append('\\hline')
+        if self.evaluation.excluded:
+            lines.append('\\hline')
+            for label, label_counts in sorted(self.evaluation.excluded.items(), key=lambda item: item[0]):
+                lines.append(_format_latex(label, *self.evaluation.precrecf1(label_counts[OKAY_KEY], label_counts[EXCESS_KEY],
+                                                                             label_counts[MISS_KEY])))
+            lines.append('\\hline')
+        lines.append('\\end{tabular}')
+        lines.append('\\end{table}')
+        return '\n'.join(lines)
 
     def __str__(self) -> str:
         lines = ['Number of Sentences    :      {:>6}'.format(self.ns),
@@ -532,17 +560,35 @@ def dfs(root, child_func):
     return list(visited)
 
 
-if __name__ == '__main__':
+def eval_from_files(gold_path, pred_path):
+    gold_props, pred_props = conll_iterator(gold_path), conll_iterator(pred_path)
+    return evaluate(gold=gold_props, pred=pred_props)
+
+
+def perl_output(opts):
+    evaluation_results = eval_from_files(gold_path=opts.gold, pred_path=opts.pred)
+    results = []
+    if opts.latex:
+        results.append(evaluation_results.latex())
+    else:
+        results.append(str(evaluation_results))
+    if opts.confusions:
+        results.append(evaluation_results.confusion_matrix())
+    return '\n'.join(results)
+
+
+def options(args=None):
     parser = argparse.ArgumentParser(description="Evaluation program for the CoNLL-2005 Shared Task")
     parser.add_argument('--gold', type=str, required=True, help='Path to file containing gold propositions.')
     parser.add_argument('--pred', type=str, required=True, help='Path to file containing predicted propositions.')
+    parser.add_argument('--latex', dest='latex', action='store_true',
+                        help='Produce a results table in LaTeX')
     parser.add_argument('-C', dest='confusions', action='store_true',
                         help='Produce a confusion matrix of gold vs. predicted arguments, wrt. their role')
     parser.set_defaults(confusions=False)
-    opts = parser.parse_args()
+    parser.set_defaults(latex=False)
+    return parser.parse_args(args)
 
-    gold_props, pred_props = conll_iterator(opts.gold), conll_iterator(opts.pred)
-    evaluation_results = evaluate(gold=gold_props, pred=pred_props)
-    print(evaluation_results)
-    if opts.confusions:
-        print(evaluation_results.confusion_matrix())
+
+if __name__ == '__main__':
+    print(perl_output(options()))
