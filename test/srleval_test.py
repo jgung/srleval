@@ -26,7 +26,7 @@ class TestEval(unittest.TestCase):
         output = get_perl_output(_opts.gold, _opts.pred, _opts.latex, _opts.confusions)
         with open(expected_path, 'r') as f:
             for expected, actual in zip(f, output.split('\n')):
-                self.assertEquals(expected.strip(), actual.strip())
+                self.assertEqual(expected.strip(), actual.strip())
 
     def test_all_correct(self):
         self._evaluate("resources/gold.txt", "resources/pred.perfect.txt", 3, 8, 17, 0, 0)
