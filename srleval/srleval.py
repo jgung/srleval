@@ -591,7 +591,7 @@ def eval_from_files(gold_path, pred_path):
 
 def get_perl_output(gold_path, pred_path, latex=False, confusions=False):
     """
-        Return a string equivalent to original CoNLL 2005 perl script output.
+    Return a string equivalent to original CoNLL 2005 perl script output.
     :param gold_path: path to gold props
     :param pred_path: path to predicted props
     :param latex: if `True`, output in LaTeX format
@@ -622,6 +622,10 @@ def options(args=None):
     return parser.parse_args(args)
 
 
-if __name__ == '__main__':
+def main():
     _opts = options()
     print(get_perl_output(_opts.gold, _opts.pred, _opts.latex, _opts.confusions))
+
+
+if __name__ == '__main__':
+    main()
