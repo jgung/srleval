@@ -87,15 +87,20 @@ class Evaluation(object):
         return "\n".join(lines)
 
     def __str__(self) -> str:
-        def _format(val, ok, op, ms, prec, rec, f1):
-            return '{:>10}   {:>6}  {:>6}  {:>6}   {:>6.2f}  {:>6.2f}  {:>6.2f}'.format(val, ok, op, ms, prec, rec, f1)
+        max_len = len(max({*self.types.keys(), *self.excluded.keys()}, key=lambda x: len(x)))
 
-        line = "------------------------------------------------------------"
+        def _format(val, ok, op, ms, prec, rec, f1):
+            return '{:>{max_len}}   {:>6}  {:>6}  {:>6}   {:>6.2f}  {:>6.2f}  {:>6.2f}'.format(val, ok, op, ms, prec, rec, f1,
+                                                                                               max_len=max_len)
+
+        summary = _format("Overall", self.ok, self.op, self.ms, *self.prec_rec_f1())
+        line = '-' * len(summary)
         lines = [
-            '{:>10}   {:>6}  {:>6}  {:>6}   {:>6}  {:>6}  {:>6}'.format("", "corr.", "excess", "missed", "prec.", "rec.", "F1"),
+            '{:>{max_len}}   {:>6}  {:>6}  {:>6}   {:>6}  {:>6}  {:>6}'.format("", "corr.", "excess", "missed", "prec.", "rec.",
+                                                                               "F1", max_len=max_len),
             line,
-            _format("Overall", self.ok, self.op, self.ms, *self.prec_rec_f1()),
-            '----------'
+            summary,
+            '-' * max_len
         ]
 
         for label in sorted(self.types.keys()):
